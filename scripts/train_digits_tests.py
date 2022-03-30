@@ -107,6 +107,9 @@ if __name__ == '__main__':
 
     dataset_names = [args.source, args.target]
 
+    print(dataset_names)
+    exit()
+
     loader_plain   = DigitsLoader('/tmp/data', dataset_names, download=True, shuffle=True, batch_size=128, normalize=True, num_workers=4)
     loader_augment = DigitsLoader('/tmp/data', dataset_names, download=True, shuffle=True, batch_size=128, num_workers=4,
                                   normalize=True, augment={args.target: 2}, augment_func = Duplicate)

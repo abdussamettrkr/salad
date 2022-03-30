@@ -13,6 +13,9 @@ from tqdm import tqdm
 import torch
 import torch.utils.data
 import torch.nn as nn
+from sklearn.metrics import f1_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import precision_score
 
 import itertools
 
@@ -203,10 +206,16 @@ class Solver(EventBasedSolver, StructuredInit):
     def cuda(self, obj):
         """ Move nested iterables between CUDA or CPU
         """
+
+
         if isinstance(obj, tuple) or isinstance(obj, list):
             obj = [self.cuda(el) for el in obj]
+            
         else:
             obj = self.to_cuda(obj)
+
+
+
         return obj
 
     def register_loss(self, func, weight = 1.,
@@ -356,6 +365,9 @@ class Solver(EventBasedSolver, StructuredInit):
             except Exception as e:
                 print('Error in resolving: {}'.format(n))
                 raise e
+        # print('-----------Loss dict1----------')
+        # print(loss_dict)
+        # print('-----------Loss dict1----------')
         return loss_dict
 
     def _loss(self, optim, batch):
@@ -364,6 +376,11 @@ class Solver(EventBasedSolver, StructuredInit):
 
         # retrieve the registered loss
         loss_args = self.agg_loss[optim](batch)
+        # print('------------------loss_args-------------')
+        # print(loss_args['acc_t'][0].size())
+        # print(loss_args['acc_t'][1].size())
+        # print('------------------loss_args-------------')
+        
         loss_dict = self.compute_loss_dict(loss_args)
 
         # TODO make normalization optional?
@@ -377,10 +394,14 @@ class Solver(EventBasedSolver, StructuredInit):
                        for k in keys) / norm
         else:
             loss = torch.tensor(0)
-
+        # print('-----------Loss dict2----------')
+        # print(loss_dict)
+        # print('-----------Loss dict2----------')
         return loss, loss_dict 
 
     def _step(self, batch):
+
+
         total_losses = {}
 
         # loop through models and optimize
@@ -389,13 +410,17 @@ class Solver(EventBasedSolver, StructuredInit):
 
             for _ in range(self.optim_steps[optimizer]):
                 loss, loss_dict = self._loss(optimizer, batch)
-
+                # print('-----Loss in step-------')
+                # print(loss)
+                # print('-----------------------------------')
+                # print(loss_dict)
+                # print('------------out_step----------------------')
                 optimizer.zero_grad()
                 if loss.requires_grad:
                     loss.backward(retain_graph=(not last_pass) and
                                                 self.retain_graph[optimizer])
                 optimizer.step()
-
+            #exit()
             total_losses.update(
                 {n : float(l.data.cpu().numpy()) for n,l in loss_dict.items()}
             )
@@ -420,6 +445,7 @@ class Solver(EventBasedSolver, StructuredInit):
             self.start_batch()
             try:
                 batch = self.cuda(batch)
+
                 total_losses = self._step(batch)
                 total_losses.update({'epoch' : int(epoch), 'batch' : int(1+batch_idx)})
                 losses.append(total_losses)
@@ -432,14 +458,15 @@ class Solver(EventBasedSolver, StructuredInit):
             except KeyboardInterrupt:
                 print("Training was interrupted. Finishing training")
                 return losses, True
-
-            self.finish_batch()
-
+            # print('------------losses-----------')
+            # print(losses)
+            self.finish_batch()   
+            break     
         self.finish_epoch()
 
         return losses, False
 
-    def optimize(self):
+    def optimize(self,model):
 
         """ Start the optimization process
 
@@ -453,6 +480,10 @@ class Solver(EventBasedSolver, StructuredInit):
         for model in self.models:
             model.train(True)
 
+        src_results = pd.DataFrame()
+        trg_results = pd.DataFrame()
+
+        
         losses = []
         pbar = tqdm(range(self.n_epochs))
         for epoch in pbar:
@@ -469,8 +500,91 @@ class Solver(EventBasedSolver, StructuredInit):
             pbar.set_description('Average Loss: {}'.format(
                 self.format_summary_report(epoch_losses)))
 
+            src_scores,trg_scores = self.calculate_metrics(epoch)
+            src_results = pd.concat([src_results,src_scores])
+            trg_results = pd.concat([trg_results,trg_scores])
+
+            src_results_fname = 'src_results.csv'
+            src_results_fname = os.path.join(self.savedir, src_results_fname)
+            src_results.to_csv(src_results_fname)
+
+            trg_results_fname = 'trg_results.csv'
+            trg_results_fname = os.path.join(self.savedir, trg_results_fname)
+            trg_results.to_csv(trg_results_fname)
+
             if terminate:
                 break
+
+    def get_scores(self,y_true,y_pred,epoch):
+        f1_micro = f1_score(y_true, y_pred, average='micro')
+        f1_macro = f1_score(y_true, y_pred, average='macro')
+        f1_weighted = f1_score(y_true, y_pred, average='weighted')
+        
+        recall_micro = recall_score(y_true, y_pred, average='micro')
+        recall_macro = recall_score(y_true, y_pred, average='macro')
+        recall_weighted = recall_score(y_true, y_pred, average='weighted')
+        
+        precision_micro = precision_score(y_true,y_pred,average='micro')
+        precision_macro = precision_score(y_true,y_pred,average='macro')
+        precision_weighted = precision_score(y_true,y_pred,average='weighted')
+        scores = pd.DataFrame()
+        scores['epoch'] = [epoch]
+        scores['precision_micro'] = [precision_micro]
+        scores['precision_macro'] = [precision_macro]
+        scores['precision_weighted'] = [precision_weighted]
+        
+        scores['recall_micro'] = [recall_micro]
+        scores['recall_macro'] = [recall_macro]
+        scores['recall_weighted'] = [recall_weighted]
+        
+        scores['f1_micro'] = [f1_micro]
+        scores['f1_macro'] = [f1_macro]
+        scores['f1_weighted'] = [f1_weighted]
+        
+        
+
+        return scores   
+
+    def calculate_metrics(self,epoch):
+        n_batches = len(self.dataset)
+        src_y_epoch = []
+        src_pred_epoch = []
+        trg_y_epoch = []
+        trg_pred_epoch = []
+
+        print('*****Evaluating model*****')
+
+        pbar = tqdm(enumerate(self.dataset), total=n_batches)
+        for batch_idx, batch in pbar:
+            (src_x, src_y), (trg_x, trg_y___) = batch
+            with torch.no_grad():
+                class_out = self.model(src_x)[1]                
+                class_out = class_out.detach().cpu()                
+                src_preds = np.argmax(class_out,axis=1)
+                
+                src_y_epoch += src_y
+                src_pred_epoch += src_preds
+                
+                class_out = self.model(trg_x)[1]                
+                class_out = class_out.detach().cpu()                
+                trg_preds = np.argmax(class_out,axis=1)
+
+                trg_y_epoch += trg_y___
+                trg_pred_epoch += trg_preds
+
+
+
+        src_scores =  self.get_scores(src_y_epoch,src_pred_epoch,epoch)
+        trg_scores = self.get_scores(trg_y_epoch,trg_pred_epoch,epoch)
+
+        print('Source scores')
+        print(src_scores)
+        print('Target scores')
+        print(trg_scores)
+        
+        return src_scores,trg_scores
+        
+
 
     def _save_history(self, epoch, losses):
         fname = '{}-losshistory-ep{}.csv'.format(self.timestamp, epoch)

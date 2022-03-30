@@ -57,6 +57,7 @@ class DigitsLoader(MultiDomainLoader):
 
         self.datasets = {}
         for key in keys:
+            
             T = default_transforms(key)
             if normalize:
                 print('Normalize data')
@@ -67,7 +68,9 @@ class DigitsLoader(MultiDomainLoader):
 
             if key in augment.keys():
                 self.datasets[key] = augment_func(self.datasets[key], augment[key])
-
+        # print('Datasets:',self.datasets)
+        # print('Keys:',keys)
+        
         if isinstance(batch_size, int):
             batch_size = [batch_size] * len(keys)
 

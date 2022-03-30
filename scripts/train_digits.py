@@ -7,6 +7,9 @@
 import torch
 from torch import nn
 import numpy as np
+import sys
+
+sys.path.append('/home/tr/Desktop/anomaly_detection/salad')
 
 from salad.datasets.da import toy
 from salad.utils import config
@@ -98,9 +101,14 @@ if __name__ == '__main__':
 
     dataset_names = [args.source, args.target]
 
+    print(dataset_names)
+    print('--------First------')
+    ##Loads only svhn???
     loader_plain   = DigitsLoader('/tmp/data', dataset_names, download=True, shuffle=True, batch_size=128, normalize=True, num_workers=4)
+    print('--------Second------')
     loader_augment = DigitsLoader('/tmp/data', dataset_names, download=True, shuffle=True, batch_size=128, num_workers=4,
                                   normalize=True, augment={args.target: 2})
+
 
     if args.adv:
         model, teacher, disc, kwargs = experiment_setup(args)
@@ -110,7 +118,7 @@ if __name__ == '__main__':
     if args.vada:
         model, teacher, disc, kwargs = experiment_setup(args)
         experiment = solver.VADASolver(model, disc, loader_plain, **kwargs)
-        experiment.optimize()
+        experiment.optimize(model)
 
     if args.dann:
         model, teacher, disc, kwargs = experiment_setup(args)
